@@ -3,6 +3,8 @@ package com.sistema.distribuido.network
 import com.sistema.distribuido.network.protocol.CimMessage
 import com.sistema.distribuido.network.protocol.CimMessageBuilder
 import com.sistema.distribuido.network.protocol.CimProtocol
+import com.sistema.distribuido.network.protocol.AppType
+import com.sistema.distribuido.network.protocol.StationTopology
 import com.sistema.distribuido.network.protocol.CommandType
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -68,7 +70,15 @@ class CommunicationCoordinator(
     suspend fun registerSession(
         mac: String,
         deviceName: String,
-        appType: String
+        appType: AppType
+    ) {
+        registerSession(mac = mac, deviceName = deviceName, appTypeName = appType.name)
+    }
+
+    suspend fun registerSession(
+        mac: String,
+        deviceName: String,
+        appTypeName: String
     ) {
         val lock = sessionLocks.getOrPut(mac) { Mutex() }
         lock.withLock {
@@ -82,7 +92,7 @@ class CommunicationCoordinator(
             onLog("[COORD] Sesión registrada: $deviceName [$mac]")
 
             // Solicitar autorización al PermissionManager
-            requestAuthorizationInternal(mac, deviceName, appType)
+            requestAuthorizationInternal(mac, deviceName, StationTopology.normalizeAppType(appTypeName))
         }
     }
 
@@ -92,7 +102,7 @@ class CommunicationCoordinator(
     private suspend fun requestAuthorizationInternal(
         mac: String,
         deviceName: String,
-        appType: String
+        appType: AppType
     ) {
         try {
             if (permissionManager == null) {
@@ -106,7 +116,7 @@ class CommunicationCoordinator(
             // Solicitar permiso
             val decision = permissionManager.requestPermission(
                 mac = mac,
-                appType = com.sistema.distribuido.network.protocol.AppType.valueOf(appType),
+                appType = appType,
                 deviceName = deviceName
             )
 

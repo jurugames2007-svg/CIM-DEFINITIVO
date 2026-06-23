@@ -34,6 +34,7 @@ import com.sistema.distribuido.network.*
 import com.sistema.distribuido.network.PermissionDecision
 import com.sistema.distribuido.network.protocol.AppType
 import com.sistema.distribuido.network.protocol.CimProtocol
+import com.sistema.distribuido.network.protocol.StationTopology
 import com.sistema.distribuido.network.prefecto.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -241,10 +242,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun resolveStationAppType(stationName: String, stationUuid: String): AppType {
-        val fromName = AppType.values().firstOrNull { it.name.equals(stationName, ignoreCase = true) }
-        if (fromName != null) return fromName
-        val normalized = CimProtocol.STATION_UUIDS.entries.firstOrNull { it.value.equals(stationUuid, ignoreCase = true) }?.key
-        return normalized?.let { name -> AppType.values().firstOrNull { it.name.equals(name, ignoreCase = true) } } ?: AppType.UNKNOWN
+        val fromName = StationTopology.normalizeAppType(stationName)
+        if (fromName != AppType.UNKNOWN) return fromName
+        val fromUuid = CimProtocol.STATION_UUIDS.entries.firstOrNull { it.value.equals(stationUuid, ignoreCase = true) }?.key
+        return fromUuid ?: AppType.UNKNOWN
     }
 
     private suspend fun handleTcpHandshake(ip: String, cim: com.sistema.distribuido.network.protocol.CimMessage) {

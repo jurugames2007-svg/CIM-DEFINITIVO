@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.provider.Settings
 import com.sistema.distribuido.network.protocol.AppType
+import com.sistema.distribuido.network.protocol.StationTopology
 import java.util.*
 
 /**
@@ -62,14 +63,8 @@ class AppIdentifier private constructor(private val context: Context, val appTyp
         var name = sharedPrefs.getString("device_name", "")
 
         if (name.isNullOrEmpty()) {
-            name = when (appType) {
-                AppType.COORDINADOR -> "Coordinador-${Build.MODEL}"
-                AppType.PLC -> "PLC-Cinta-${Build.MODEL}"
-                AppType.MANUFACTURA -> "Robot-${Build.MODEL}"
-                AppType.CALIDAD -> "QC-Cámara-${Build.MODEL}"
-                AppType.ALMACEN -> "Almacén-${Build.MODEL}"
-                else -> "Device-${Build.MODEL}"
-            }
+            val baseName = StationTopology.definitionFor(appType)?.displayName ?: "Device"
+            name = "$baseName-${Build.MODEL}"
             sharedPrefs.edit().putString("device_name", name).apply()
         }
 
@@ -130,14 +125,7 @@ fun generateMacFromId(id: String, appType: AppType): String {
  * Obtiene el AppType actual
  */
 fun getCurrentAppType(context: Context): AppType {
-    return when (context.packageName) {
-        "com.industria.coordinacion" -> AppType.COORDINADOR
-        "com.industria.plc" -> AppType.PLC
-        "com.industria.manufactura" -> AppType.MANUFACTURA
-        "com.industria.calidad" -> AppType.CALIDAD
-        "com.industria.almacenamiento" -> AppType.ALMACEN
-        else -> AppType.UNKNOWN
-    }
+    return StationTopology.appTypeForPackage(context.packageName)
 }
 
 /**
@@ -146,5 +134,4 @@ fun getCurrentAppType(context: Context): AppType {
 fun Context.getAppIdentifier(): AppIdentifier {
     return AppIdentifier.getInstance()
 }
-
 

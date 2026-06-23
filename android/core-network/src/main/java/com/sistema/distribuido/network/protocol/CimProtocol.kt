@@ -59,12 +59,7 @@ object CimProtocol {
     }
 
     // Mapeo de Identificadores de Estación (UUIDs de Software)
-    val STATION_UUIDS = mapOf(
-        "ALMACEN" to "CIM-ST-ALM-X1",
-        "MANUFACTURA" to "CIM-ST-MAN-X2",
-        "CALIDAD" to "CIM-ST-CAL-X3",
-        "PLC" to "CIM-ST-PLC-X4"
-    )
+    val STATION_UUIDS = StationTopology.stationIdsByAppType
 
     /**
      * Formato Handshake Esperado:
