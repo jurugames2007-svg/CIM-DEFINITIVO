@@ -205,10 +205,9 @@ fun ManufacturaApp(commCoordinator: CommunicationCoordinator) {
                             }
                             Spacer(Modifier.height(12.dp))
                             Text("MOVIMIENTO MANUAL (JOGGING)", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp)
-                            repeat(2) { axis ->
+                            listOf("X", "Y", "Z").forEach { axisName ->
                                 Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    val axisName = if(axis == 0) "X" else "Y"
-                                    Text(axisName, modifier = Modifier.width(20.dp), color = Color.White, fontWeight = FontWeight.Bold)
+                                    Text(axisName, modifier = Modifier.width(24.dp).align(Alignment.CenterVertically), color = Color.White, fontWeight = FontWeight.Bold)
                                     IndustrialActionButton("-", Icons.Default.Remove, Modifier.weight(1f).height(36.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:$axisName:-10", "CMD: MOVE $axisName -10") })
                                     IndustrialActionButton("+", Icons.Default.Add, Modifier.weight(1f).height(36.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:$axisName:+10", "CMD: MOVE $axisName +10") })
                                 }
@@ -224,6 +223,40 @@ fun ManufacturaApp(commCoordinator: CommunicationCoordinator) {
                             onRun = { prog -> sendAuthorizedHardwareCommand("R:RUN $prog", "RUN $prog") },
                             onAuto = { sendAuthorizedHardwareCommand("R:AUTO", "AUTO") }
                         )
+                        IndustrialCard("Secuencias Predefinidas", Icons.Default.PlaylistPlay, headerColor = IndustrialTheme.Secundario) {
+                            Text("Ejecuta secuencias de programas en orden (espera entre cada paso)", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp)
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
+                                IndustrialActionButton(
+                                    "SEQ: ARU > ARU2", Icons.Default.DoubleArrow, Modifier.weight(1f),
+                                    enabled = isConnectedBt && (isAuthorized || independentMode),
+                                    colorFondo = IndustrialTheme.Secundario,
+                                    onClick = {
+                                        scope.launch {
+                                            listOf("ARU", "ARU2").forEach { prog ->
+                                                sendAuthorizedHardwareCommand("R:RUN $prog", "SEQ: RUN $prog")
+                                                kotlinx.coroutines.delay(3000)
+                                            }
+                                            addLog("SEQ: ARU > ARU2 completada")
+                                        }
+                                    }
+                                )
+                                IndustrialActionButton(
+                                    "SEQ: ARU1>ARU3>ARU4", Icons.Default.DoubleArrow, Modifier.weight(1f),
+                                    enabled = isConnectedBt && (isAuthorized || independentMode),
+                                    colorFondo = IndustrialTheme.Secundario,
+                                    onClick = {
+                                        scope.launch {
+                                            listOf("ARU1", "ARU3", "ARU4").forEach { prog ->
+                                                sendAuthorizedHardwareCommand("R:RUN $prog", "SEQ: RUN $prog")
+                                                kotlinx.coroutines.delay(3000)
+                                            }
+                                            addLog("SEQ: ARU1 > ARU3 > ARU4 completada")
+                                        }
+                                    }
+                                )
+                            }
+                        }
                     }
                     1 -> {
                         IndustrialCard("Grabado Láser CNC", Icons.Default.FlashOn, headerColor = IndustrialTheme.Advertencia) {
@@ -392,7 +425,7 @@ fun ManufacturaApp(commCoordinator: CommunicationCoordinator) {
                     }
                 }
 
-                if (true) { // Substitución de BuildConfig.DEBUG por true para simplicidad o usar false
+                if (BuildConfig.DEBUG) {
                     IndustrialCard("Hardware debug", Icons.Default.DeveloperMode, headerColor = Color.Magenta) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             IndustrialActionButton(

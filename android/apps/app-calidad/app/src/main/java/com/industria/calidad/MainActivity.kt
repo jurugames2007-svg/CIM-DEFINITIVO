@@ -277,13 +277,12 @@ fun CalidadApp(commCoordinator: CommunicationCoordinator) {
                             }
                             Spacer(Modifier.height(12.dp))
                             Text("MOVIMIENTO MANUAL", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp)
-                            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IndustrialActionButton("X-", Icons.Default.KeyboardArrowLeft, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:X:-10", "CMD: MOVE X -10") })
-                                IndustrialActionButton("X+", Icons.Default.KeyboardArrowRight, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:X:+10", "CMD: MOVE X +10") })
-                            }
-                            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IndustrialActionButton("Y-", Icons.Default.KeyboardArrowDown, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:Y:-10", "CMD: MOVE Y -10") })
-                                IndustrialActionButton("Y+", Icons.Default.KeyboardArrowUp, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:Y:+10", "CMD: MOVE Y +10") })
+                            listOf("X", "Y", "Z").forEach { axis ->
+                                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(axis, modifier = Modifier.width(24.dp).align(Alignment.CenterVertically), color = Color.White, fontWeight = FontWeight.Bold)
+                                    IndustrialActionButton("$axis-", Icons.Default.Remove, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:$axis:-10", "CMD: MOVE $axis -10") })
+                                    IndustrialActionButton("$axis+", Icons.Default.Add, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:$axis:+10", "CMD: MOVE $axis +10") })
+                                }
                             }
                             Spacer(Modifier.height(12.dp))
                             IndustrialActionButton("DESCARTAR PIEZA", Icons.Default.DeleteForever, colorFondo = IndustrialTheme.Error, enabled = isConnectedBt && (isAuthorized || independentMode), onClick = {
@@ -324,7 +323,7 @@ fun CalidadApp(commCoordinator: CommunicationCoordinator) {
                     }
                 }
 
-                if (true) {
+                if (BuildConfig.DEBUG) {
                     IndustrialCard("Debug de Calidad", Icons.Default.DeveloperMode, headerColor = Color.Magenta) {
                         IndustrialActionButton(texto = "Simular Captura Exitosa", icono = Icons.Default.PhotoCamera, colorFondo = Color.DarkGray, onClick = { addLog("SIM_ESP32: CAM_SNAP_OK | DATA SENT") })
                     }

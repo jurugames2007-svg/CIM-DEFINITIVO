@@ -15,12 +15,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sistema.distribuido.network.*
@@ -40,9 +40,7 @@ class MainActivity : ComponentActivity() {
         IndustrialErrorManager.install(this) {}
         AppIdentifier.init(this, AppType.ALMACEN)
         GlobalPermissionManager.init(this)
-        GlobalBluetoothManager.init(this, onLog = { msg ->
-            // logs handled by local instances usually, but we can set up a global log stream if needed
-        })
+        GlobalBluetoothManager.init(this)
         enableEdgeToEdge()
         setContent {
             val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
@@ -75,9 +73,17 @@ fun AlmacenApp(commCoordinator: CommunicationCoordinator) {
     var selectedTab by remember { mutableStateOf(0) }
     var selectedRackPosition by remember { mutableStateOf(1) }
 
+    // Rack occupancy: position (1-18) -> occupied
+    val rackOccupancy = remember { mutableStateMapOf<Int, Boolean>() }
+    var totalStored by remember { mutableStateOf(0) }
+    var totalRetrieved by remember { mutableStateOf(0) }
+
+    val isActive by remember { derivedStateOf { isConnectedBt && (isAuthorized || independentMode) } }
+
     fun addLog(msg: String) {
         val time = java.text.SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         logs.add(0, "[$time] $msg")
+        if (logs.size > 200) logs.removeAt(logs.lastIndex)
     }
 
     val stationClient = remember(ipCoordinator) {
@@ -85,12 +91,35 @@ fun AlmacenApp(commCoordinator: CommunicationCoordinator) {
             onLog = { msg -> logs.add(0, "[NET] $msg") }
             onStatusChanged = { isConnectedNet = it }
             onAuthorizationStateChanged = { authorizationState = it }
+            onCommandReceived = { cmd ->
+                scope.launch {
+                    addLog("CMD recibido: $cmd")
+                    when {
+                        cmd.startsWith("STO:") -> {
+                            val pos = cmd.substringAfter("STO:").trim().toIntOrNull()
+                            if (pos != null && pos in 1..18) {
+                                rackOccupancy[pos] = true
+                                totalStored++
+                                addLog("Almacenado en POS $pos (remoto)")
+                            }
+                        }
+                        cmd.startsWith("PICK:") -> {
+                            val pos = cmd.substringAfter("PICK:").trim().toIntOrNull()
+                            if (pos != null && pos in 1..18) {
+                                rackOccupancy[pos] = false
+                                totalRetrieved++
+                                addLog("Retirado de POS $pos (remoto)")
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
     fun sendAuthorizedHardwareCommand(command: String, logText: String) {
         if (!isAuthorized && !independentMode) {
-            addLog("✗ No autorizado - activar modo autónomo o esperar VALIDADO por coordinador")
+            addLog("No autorizado - activar modo autonomo o esperar VALIDADO")
             return
         }
         bt.send(command, requireAuthorization = !independentMode, authorized = isAuthorized)
@@ -99,44 +128,71 @@ fun AlmacenApp(commCoordinator: CommunicationCoordinator) {
                 commCoordinator.routeCommand(AppIdentifier.getInstance().deviceMac, command)
             }
         }
-        addLog(if (independentMode) "[AUTÓNOMO] $logText" else logText)
+        addLog(if (independentMode) "[AUTONOMO] $logText" else logText)
+    }
+
+    fun storeAtPosition(pos: Int) {
+        sendAuthorizedHardwareCommand("STO:$pos", "CMD: STORE AT POS $pos")
+        rackOccupancy[pos] = true
+        totalStored++
+        if (isConnectedNet && isAuthorized) {
+            scope.launch { stationClient.sendEventSafe("STORED:$pos") }
+        }
+    }
+
+    fun pickFromPosition(pos: Int) {
+        sendAuthorizedHardwareCommand("PICK:$pos", "CMD: PICK FROM POS $pos")
+        rackOccupancy[pos] = false
+        totalRetrieved++
+        if (isConnectedNet && isAuthorized) {
+            scope.launch { stationClient.sendEventSafe("PICKED:$pos") }
+        }
     }
 
     IndustrialScaffold(
-        titulo = "Logística Pro v6.0", 
-        subtitulo = "GESTIÓN DE RACKS INDUSTRIAL",
+        titulo = "Logistica Pro v6.0",
+        subtitulo = "GESTION DE RACKS INDUSTRIAL",
         floatingActionButton = { BluetoothConnectionFAB() }
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
             ScrollableTabRow(selectedTabIndex = selectedTab, containerColor = Color.Black, contentColor = IndustrialTheme.Primario, edgePadding = 16.dp, divider = {}) {
                 Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("POSICIONES", fontSize = 12.sp) })
-                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("SINCRO", fontSize = 12.sp) })
-                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text("BRAZO", fontSize = 12.sp) })
+                Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("BRAZO", fontSize = 12.sp) })
+                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text("STATS", fontSize = 12.sp) })
+                Tab(selected = selectedTab == 3, onClick = { selectedTab = 3 }, text = { Text("SINCRO", fontSize = 12.sp) })
             }
 
             Column(Modifier.weight(1f).padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 when (selectedTab) {
                     0 -> {
-                        IndustrialCard("Matriz de Almacén (18 POS)", Icons.Default.Inventory2) {
-                            IndustrialStatusRow("Conexión ESP32", if(isConnectedBt) "LINK OK" else "OFFLINE", isConnectedBt)
-                            Text("Selecciona la posición del rack y pulsa ALMACENAR", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
+                        IndustrialCard("Matriz de Almacen (18 POS)", Icons.Default.Inventory2) {
+                            IndustrialStatusRow("Conexion ESP32", if (isConnectedBt) "LINK OK" else "OFFLINE", isConnectedBt)
+                            val occupiedCount = rackOccupancy.count { it.value }
+                            IndustrialStatusRow("Ocupacion", "$occupiedCount / 18 posiciones", occupiedCount > 0)
+                            Text("Selecciona posicion. Verde = ocupado, gris = libre.", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
 
                             repeat(3) { level ->
                                 Text("NIVEL ${level + 1}", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp, modifier = Modifier.padding(top = 8.dp))
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     repeat(6) { col ->
                                         val posId = level * 6 + col + 1
+                                        val occupied = rackOccupancy[posId] == true
+                                        val selected = selectedRackPosition == posId
                                         IndustrialActionButton(
                                             texto = "$posId",
-                                            icono = Icons.Default.Inventory2,
+                                            icono = if (occupied) Icons.Default.CheckCircle else Icons.Default.Inventory2,
                                             modifier = Modifier.weight(1f).height(36.dp),
-                                            colorFondo = if (selectedRackPosition == posId) IndustrialTheme.Exito else IndustrialTheme.Tarjeta,
+                                            colorFondo = when {
+                                                selected -> IndustrialTheme.Primario
+                                                occupied -> IndustrialTheme.Exito.copy(alpha = 0.6f)
+                                                else -> IndustrialTheme.Tarjeta
+                                            },
                                             enabled = true,
                                             buttonHeight = 36.dp,
                                             fillMaxWidth = false,
                                             onClick = {
                                                 selectedRackPosition = posId
-                                                addLog("POSICIÓN SELECCIONADA: $posId")
+                                                addLog("POSICION SELECCIONADA: $posId ${if (occupied) "(ocupada)" else "(libre)"}")
                                             }
                                         )
                                     }
@@ -144,69 +200,93 @@ fun AlmacenApp(commCoordinator: CommunicationCoordinator) {
                             }
 
                             Spacer(Modifier.height(12.dp))
-                            IndustrialActionButton(
-                                texto = "ALMACENAR EN POS $selectedRackPosition",
-                                icono = Icons.Default.Send,
-                                enabled = isConnectedBt && (isAuthorized || independentMode),
-                                onClick = { sendAuthorizedHardwareCommand("STO:$selectedRackPosition", "CMD: STORE AT POS $selectedRackPosition") }
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            IndustrialActionButton(
-                                texto = "RUN SCORBOT EN POS $selectedRackPosition",
-                                icono = Icons.Default.PlayCircle,
-                                colorFondo = IndustrialTheme.Secundario,
-                                enabled = isConnectedBt && (isAuthorized || independentMode),
-                                onClick = { sendAuthorizedHardwareCommand("R:RUN STORE $selectedRackPosition", "RUN STORE $selectedRackPosition") }
-                            )
+                            val selOccupied = rackOccupancy[selectedRackPosition] == true
+                            IndustrialStatusRow("POS $selectedRackPosition", if (selOccupied) "OCUPADA" else "LIBRE", selOccupied)
+
+                            Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
+                                IndustrialActionButton(
+                                    texto = "ALMACENAR",
+                                    icono = Icons.Default.Archive,
+                                    modifier = Modifier.weight(1f),
+                                    colorFondo = IndustrialTheme.Exito,
+                                    enabled = isActive && !selOccupied,
+                                    onClick = { storeAtPosition(selectedRackPosition) }
+                                )
+                                IndustrialActionButton(
+                                    texto = "RETIRAR",
+                                    icono = Icons.Default.Unarchive,
+                                    modifier = Modifier.weight(1f),
+                                    colorFondo = IndustrialTheme.Advertencia,
+                                    enabled = isActive && selOccupied,
+                                    onClick = { pickFromPosition(selectedRackPosition) }
+                                )
+                            }
                         }
                     }
                     1 -> {
-                        IndustrialCard("Red de Coordinación", Icons.Default.Lan, headerColor = IndustrialTheme.Secundario) {
-                            IndustrialTextField(valor = ipCoordinator, onValueChange = { ipCoordinator = it }, label = "IP Hub Central")
-                            IndustrialStatusRow("Servicio Hub", if(isConnectedNet) "ACTIVO" else "DOWN", isConnectedNet)
-                            IndustrialStatusRow("Autorización", authorizationState, isAuthorized)
-                            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Modo Autónomo", color = IndustrialTheme.TextoSecundario)
-                                Switch(checked = independentMode, onCheckedChange = { independentMode = it }, colors = SwitchDefaults.colors(checkedThumbColor = IndustrialTheme.Exito))
-                            }
-                            IndustrialStatusRow("Modo Autónomo", if(independentMode) "ACTIVO" else "DESACTIVADO", independentMode)
-                            IndustrialActionButton(texto = "Sincronizar", icono = Icons.Default.Router, onClick = { stationClient.connect() })
-                        }
-                    }
-                    2 -> {
                         IndustrialCard("Control Scorbot", Icons.Default.PrecisionManufacturing) {
                             Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
-                                IndustrialActionButton("HOME", Icons.Default.Home, Modifier.weight(1f), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:HOME", "CMD: HOME") })
-                                IndustrialActionButton("READY", Icons.Default.Check, Modifier.weight(1f), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:READY", "CMD: READY") })
+                                IndustrialActionButton("HOME", Icons.Default.Home, Modifier.weight(1f), enabled = isActive, onClick = { sendAuthorizedHardwareCommand("R:HOME", "CMD: HOME") })
+                                IndustrialActionButton("READY", Icons.Default.Check, Modifier.weight(1f), enabled = isActive, onClick = { sendAuthorizedHardwareCommand("R:READY", "CMD: READY") })
                             }
                             Spacer(Modifier.height(12.dp))
                             Text("MOVIMIENTO MANUAL", color = IndustrialTheme.TextoSecundario, fontSize = 10.sp)
-                            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IndustrialActionButton("X-", Icons.Default.KeyboardArrowLeft, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:X:-10", "CMD: MOVE X -10") })
-                                IndustrialActionButton("X+", Icons.Default.KeyboardArrowRight, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:X:+10", "CMD: MOVE X +10") })
-                            }
-                            Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                IndustrialActionButton("Y-", Icons.Default.KeyboardArrowDown, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:Y:-10", "CMD: MOVE Y -10") })
-                                IndustrialActionButton("Y+", Icons.Default.KeyboardArrowUp, Modifier.weight(1f).height(44.dp), enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:MOVE:Y:+10", "CMD: MOVE Y +10") })
+                            listOf("X", "Y", "Z").forEach { axis ->
+                                Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(axis, modifier = Modifier.width(24.dp).align(Alignment.CenterVertically), color = Color.White, fontWeight = FontWeight.Bold)
+                                    IndustrialActionButton("$axis-", Icons.Default.Remove, Modifier.weight(1f).height(40.dp), enabled = isActive, onClick = { sendAuthorizedHardwareCommand("R:MOVE:$axis:-10", "MOVE $axis -10") })
+                                    IndustrialActionButton("$axis+", Icons.Default.Add, Modifier.weight(1f).height(40.dp), enabled = isActive, onClick = { sendAuthorizedHardwareCommand("R:MOVE:$axis:+10", "MOVE $axis +10") })
+                                }
                             }
                             Spacer(Modifier.height(12.dp))
-                            IndustrialActionButton("DESCARTAR PIEZA", Icons.Default.DeleteForever, colorFondo = IndustrialTheme.Error, enabled = isConnectedBt && (isAuthorized || independentMode), onClick = { sendAuthorizedHardwareCommand("R:DISCARD", "CMD: DISCARD FAILED PIECE") })
+                            IndustrialActionButton("DESCARTAR PIEZA", Icons.Default.DeleteForever, colorFondo = IndustrialTheme.Error, enabled = isActive, onClick = { sendAuthorizedHardwareCommand("R:DISCARD", "CMD: DISCARD") })
                         }
                         ScorbotRunConsole(
-                            enabled = isConnectedBt && (isAuthorized || independentMode),
-                            presets = listOf("ALMACENAR" to "STORE", "RETIRAR" to "PICK"),
+                            enabled = isActive,
+                            presets = listOf("ALMACENAR" to "STORE", "RETIRAR" to "PICK", "HOME" to "HOME"),
                             initialProgram = "STORE",
                             descripcion = "Ejecuta rutinas de almacenamiento en el controlador (estilo hyperterminal)",
-                            manualLabel = "Programa (ej: STORE, PICK)",
+                            manualLabel = "Programa (ej: STORE, PICK, HOME)",
                             onRun = { prog -> sendAuthorizedHardwareCommand("R:RUN $prog", "RUN $prog") },
                             onAuto = { sendAuthorizedHardwareCommand("R:AUTO", "AUTO") }
                         )
                     }
-                }
-
-                if (true) {
-                    IndustrialCard("Debug de Almacén", Icons.Default.DeveloperMode, headerColor = Color.Magenta) {
-                        IndustrialActionButton(texto = "Simular Almacenado", icono = Icons.Default.CheckCircle, colorFondo = Color.DarkGray, onClick = { addLog("SIM_ESP32: STORE_SUCCESS | POS: 12") })
+                    2 -> {
+                        IndustrialCard("Estadisticas de Almacen", Icons.Default.BarChart) {
+                            val occupiedCount = rackOccupancy.count { it.value }
+                            val freeCount = 18 - occupiedCount
+                            val occupancyRate = if (18 > 0) (occupiedCount * 100.0 / 18) else 0.0
+                            Text("Tasa de Ocupacion: ${"%.1f".format(occupancyRate)}%", color = IndustrialTheme.Primario, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.height(8.dp))
+                            IndustrialStatusRow("Posiciones Ocupadas", "$occupiedCount", occupiedCount > 0)
+                            IndustrialStatusRow("Posiciones Libres", "$freeCount", freeCount > 0)
+                            IndustrialStatusRow("Total Almacenados", "$totalStored", totalStored > 0)
+                            IndustrialStatusRow("Total Retirados", "$totalRetrieved", totalRetrieved > 0)
+                            Spacer(Modifier.height(16.dp))
+                            IndustrialActionButton("Limpiar Contadores", Icons.Default.Delete, colorFondo = Color.DarkGray, onClick = {
+                                totalStored = 0
+                                totalRetrieved = 0
+                                addLog("STATS: contadores reiniciados")
+                            })
+                            Spacer(Modifier.height(8.dp))
+                            IndustrialActionButton("Reset Rack (vaciar todo)", Icons.Default.LayersClear, colorFondo = IndustrialTheme.Error, onClick = {
+                                rackOccupancy.clear()
+                                addLog("RACK: todas las posiciones vaciadas (solo UI)")
+                            })
+                        }
+                    }
+                    3 -> {
+                        IndustrialCard("Red de Coordinacion", Icons.Default.Lan, headerColor = IndustrialTheme.Secundario) {
+                            IndustrialTextField(valor = ipCoordinator, onValueChange = { ipCoordinator = it }, label = "IP Hub Central")
+                            IndustrialStatusRow("Servicio Hub", if (isConnectedNet) "ACTIVO" else "DOWN", isConnectedNet)
+                            IndustrialStatusRow("Autorizacion", authorizationState, isAuthorized)
+                            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text("Modo Autonomo", color = IndustrialTheme.TextoSecundario)
+                                Switch(checked = independentMode, onCheckedChange = { independentMode = it }, colors = SwitchDefaults.colors(checkedThumbColor = IndustrialTheme.Exito))
+                            }
+                            IndustrialStatusRow("Modo Autonomo", if (independentMode) "ACTIVO" else "DESACTIVADO", independentMode)
+                            IndustrialActionButton(texto = "Sincronizar", icono = Icons.Default.Router, onClick = { stationClient.connect() })
+                        }
                     }
                 }
 
